@@ -1,5 +1,4 @@
 charlando
 =========
 
-Chat client built in C
-Just a test
+Concurrent Chat client built in C
