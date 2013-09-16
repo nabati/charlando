@@ -15,7 +15,5 @@
 *.exe
 *.out
 *.app
-/Client
-/Server
-/Server
-/Client
+Debug/
+Release/
