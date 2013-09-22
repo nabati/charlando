@@ -13,6 +13,15 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <assert.h>
+
+void trim_newlines(char *string, size_t length) {
+	int i;
+	for (i=0; i<length; i++) {
+		if (string[i]=='\n')
+			string[i]=' ';
+	}
+}
 
 int main(int argc, char **argv) {
 	printf("Client starting. \n");
@@ -41,15 +50,25 @@ int main(int argc, char **argv) {
 	if (connect(sockfd, &addr, sizeof(addr)) == 0) {
 		printf("Connected! \n");
 
+		char chr = NULL;
 		char *buf = malloc(100 + 1);
-		int bufsize = 100;
+		size_t bufsize = 100;
 		size_t input_size = 0;
 
 		while (1) {
-			printf("Please enter a string to send to the server below: \n");
+			printf("Client>");
 			input_size = getline(&buf, &bufsize, stdin);
-			printf("You wrote: %s \n", buf);
+			trim_newlines(buf, input_size);
 			write(sockfd, buf, (input_size + 1));
+
+			int i;
+			int result;
+			for (i = 0; (result = recv(sockfd, &chr, 1, 0)); i++) {
+				buf[i]=chr;
+				if (chr == '\0')
+					break;
+			}
+			printf("Server>%s\n", buf);
 		}
 
 	} else {
