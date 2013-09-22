@@ -16,8 +16,25 @@
 #include <unistd.h>
 #include <assert.h>
 #include <signal.h>
-
+#include <wait.h>
 #include "common.h"
+#include <errno.h>
+
+/**
+ * Waits for terminated children
+ * @param status signal code
+ */
+void sigchld_handler(int status) {
+	while (waitpid(-1, NULL, WNOHANG) != 0) {
+		if (errno == ECHILD) {
+			break;
+		}
+	}
+}
+
+void sigpipe_handler(int status) {
+	printf("Sigpipe.");
+}
 
 /**
  * Reverses a null-terminated string
@@ -76,6 +93,7 @@ int main(int argc, char **argv) {
 				char *buf = malloc(bufsize + 1);
 				char chr;
 				accepted_socket = accept(sockfd, NULL, 0);
+
 				printf("Main>Accepted socket, forking \n");
 
 				pid_t child_pid = fork();
@@ -84,28 +102,46 @@ int main(int argc, char **argv) {
 					// Child process
 					pid_t process_pid = getpid();
 					while (1) {
+						// Read if possible
 						int i;
-						for (i = 0; recv(accepted_socket, &chr, 1, 0); i++) {
+						int bytes;
+						for (i = 0;
+								(bytes = recv(accepted_socket, &chr, 1, 0)) > 0;
+								i++) {
 							buf[i] = chr;
 							if (chr == '\0')
 								break;
 						}
 
-						printf("Client[%d]>%s\n", process_pid, buf);
-						strrev(buf, strlen(buf) + 1);
-						printf("Server[%d]>%s\n", process_pid, buf);
-						if (write(accepted_socket, buf, strlen(buf) + 1)
-								== -1) {
+						// Check if it above read failed with error
+						if (bytes > 0) {
+							printf("Client[%d]>%s\n", process_pid, buf);
+							strrev(buf, strlen(buf) + 1);
+							printf("Server[%d]>%s\n", process_pid, buf);
+							if (write(accepted_socket, buf, strlen(buf) + 1)
+									== -1) {
+								break;
+							}
+						} else {
 							break;
 						}
+
 					}
 					free(buf);
-					printf("Server[%d]>Client disconnected, exiting.\n", process_pid);
-					exit(0);
+					printf("Server[%d]>Client disconnected, exiting.\n",
+							process_pid);
+					exit(EXIT_SUCCESS);
 					break;
 				}
 				default: {
 					// Parent process
+					// Register handler for SIGCHLD to wait for terminated children
+					struct sigaction sa;
+					memset(&sa, 0, sizeof sa);
+					sa.sa_handler = &sigchld_handler;
+					sa.sa_flags = SA_RESTART;
+					sigaction(SIGCHLD, &sa, NULL);
+
 					printf("Main>Child created Server[%d]", child_pid);
 					break;
 				}
