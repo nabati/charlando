@@ -19,6 +19,9 @@
 #include <wait.h>
 #include "common.h"
 #include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <mqueue.h>
 
 /**
  * Waits for terminated children
@@ -34,6 +37,32 @@ void sigchld_handler(int status) {
 
 void sigpipe_handler(int status) {
 	printf("Sigpipe.");
+}
+
+/**
+ * Registers a handler for the message queue referenced by mqd_ptr
+ * If NULL is passed, tries using the last used one.
+ * @param mqd_ptr
+ */
+void register_mq_notify(mqd_t *mqd_ptr) {
+	static *mqd_static;
+	if (mqd_ptr != NULL)
+		mqd_static = mqd_ptr;
+
+	if (mqd_static != NULL) {
+		struct sigevent sev;
+		sev.sigev_notify = SIGEV_SIGNAL;
+		sev.sigev_signo = SIGUSR1;
+		mq_notify(*mqd_static, &sev);
+	}
+}
+
+void sigusr1_handler(int status) {
+	// Re-register handler
+	register_mq_notify(NULL);
+	// Print message
+	mq_re
+	printf()
 }
 
 /**
@@ -102,6 +131,10 @@ int main(int argc, char **argv) {
 					// Child process
 					pid_t process_pid = getpid();
 					while (1) {
+						// Open queue to parent
+						mqd_t outgoing = mq_open("/charlando_main_server_input",
+						O_CREAT | O_WRONLY);
+
 						// Read if possible
 						int i;
 						int bytes;
@@ -115,7 +148,10 @@ int main(int argc, char **argv) {
 
 						// Check if it above read failed with error
 						if (bytes > 0) {
-							printf("Client[%d]>%s\n", process_pid, buf);
+							// TODO: Send to parent via message queue
+//							printf("Client[%d]>%s\n", process_pid, buf);
+							mq_send(outgoing, buf, strlen(buf) + 1, 0);
+
 							strrev(buf, strlen(buf) + 1);
 							printf("Server[%d]>%s\n", process_pid, buf);
 							if (write(accepted_socket, buf, strlen(buf) + 1)
@@ -141,6 +177,19 @@ int main(int argc, char **argv) {
 					sa.sa_handler = &sigchld_handler;
 					sa.sa_flags = SA_RESTART;
 					sigaction(SIGCHLD, &sa, NULL);
+
+					// Open message queue for incoming messages
+					mqd_t incoming = mq_open("/charlando_main_server_input",
+					O_CREAT | O_RDONLY);
+
+					// Register handler for SIGUSR1 to grab new messages
+					struct sigaction sau;
+					memset(&sa, 0, sizeof sau);
+					sau.sa_handler = &sigusr1_handler;
+					sau.sa_flags = SA_RESTART;
+					sigaction(SIGUSR1, &sau, NULL);
+
+					register_mq_notify(incoming);
 
 					printf("Main>Child created Server[%d]", child_pid);
 					break;
