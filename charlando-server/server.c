@@ -23,6 +23,10 @@
 #include <sys/stat.h>
 #include <mqueue.h>
 
+#define PARENT_MESSAGE_QUEUE "/charlando_server_parent"
+
+
+
 /**
  * Waits for terminated children
  * @param status signal code
@@ -61,7 +65,7 @@ void sigusr1_handler(int status) {
 	// Re-register handler
 	register_mq_notify(NULL);
 	// Print message
-	mq_re
+	mq_receive()
 	printf()
 }
 
@@ -81,6 +85,32 @@ void strrev(char *string, size_t length) {
 	}
 	// How to secure? Check if if \0 present?
 	memcpy(string, reversed, content);
+}
+
+/**
+ * Processes all messages on the parents message queue
+ */
+void process_mq_parent() {
+	static mqd = NULL;
+
+	// If not opened already, open message queue
+	if (mqd == NULL) {
+		mqd = mq_open(PARENT_MESSAGE_QUEUE, O_CREAT | O_RDONLY | O_NONBLOCK);
+	}
+
+	// Reregister notifier
+	register_mq_notify();
+
+	// For each message, send to all child queues.
+	char *buf = malloc(101);
+	while(mq_receive(mqd, buf, 100, 0)>=0) {
+		mq_send()
+	}
+
+}
+
+void process_mq_child() {
+
 }
 
 int main(int argc, char **argv) {
@@ -121,6 +151,7 @@ int main(int argc, char **argv) {
 				int bufsize = 100;
 				char *buf = malloc(bufsize + 1);
 				char chr;
+
 				accepted_socket = accept(sockfd, NULL, 0);
 
 				printf("Main>Accepted socket, forking \n");
