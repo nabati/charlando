@@ -22,10 +22,18 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <mqueue.h>
+#include "linkedlist.h"
 
 #define PARENT_MESSAGE_QUEUE "/charlando_server_parent"
 
+// Create a linked-list to hold the message queue descriptors of all children
+LinkedList *mq_ll;
 
+// Hold incoming message queue descriptor for parent
+mqd_t mqd_parent_incoming;
+mqd_t incoming;
+
+int accepted_socket;
 
 /**
  * Waits for terminated children
@@ -40,33 +48,7 @@ void sigchld_handler(int status) {
 }
 
 void sigpipe_handler(int status) {
-	printf("Sigpipe.");
-}
-
-/**
- * Registers a handler for the message queue referenced by mqd_ptr
- * If NULL is passed, tries using the last used one.
- * @param mqd_ptr
- */
-void register_mq_notify(mqd_t *mqd_ptr) {
-	static *mqd_static;
-	if (mqd_ptr != NULL)
-		mqd_static = mqd_ptr;
-
-	if (mqd_static != NULL) {
-		struct sigevent sev;
-		sev.sigev_notify = SIGEV_SIGNAL;
-		sev.sigev_signo = SIGUSR1;
-		mq_notify(*mqd_static, &sev);
-	}
-}
-
-void sigusr1_handler(int status) {
-	// Re-register handler
-	register_mq_notify(NULL);
-	// Print message
-	mq_receive()
-	printf()
+	fprintf(stderr, "Sigpipe.\n");
 }
 
 /**
@@ -91,30 +73,61 @@ void strrev(char *string, size_t length) {
  * Processes all messages on the parents message queue
  */
 void process_mq_parent() {
-	static mqd = NULL;
+	// Register SIGUSR1 to be signaled when new message has arrived
+	struct sigevent sev;
+	sev.sigev_notify = SIGEV_SIGNAL;
+	sev.sigev_signo = SIGUSR1;
+	mq_notify(mqd_parent_incoming, &sev);
 
-	// If not opened already, open message queue
-	if (mqd == NULL) {
-		mqd = mq_open(PARENT_MESSAGE_QUEUE, O_CREAT | O_RDONLY | O_NONBLOCK);
+	mqd_t *mqd_child;
+	Node *node = NULL;
+
+	// Allocate message buffer
+	char *msg = malloc(8192);
+	memset(msg, 0, 8192);
+
+	// Fetch messages until queue is empty
+	while (mq_receive(mqd_parent_incoming, msg, 8192, 0) >= 0) {
+		fprintf(stderr, "%s\n", msg);
+		// Send received message to each child
+		while ((node = ll_next(mq_ll))) {
+			mqd_child = node->data;
+			mq_send(*mqd_child, msg, 8192, 0);
+		}
 	}
-
-	// Reregister notifier
-	register_mq_notify();
-
-	// For each message, send to all child queues.
-	char *buf = malloc(101);
-	while(mq_receive(mqd, buf, 100, 0)>=0) {
-		mq_send()
-	}
-
 }
 
 void process_mq_child() {
+	// Register SIGUSR1 to be signaled when new message has arrived
+	struct sigevent sev;
+	sev.sigev_notify = SIGEV_SIGNAL;
+	sev.sigev_signo = SIGUSR1;
+	mq_notify(incoming, &sev);
 
+//	 Allocate message buffer
+	char *msg = malloc(8192);
+	memset(msg, 0, 8192);
+
+	// Read message from buffer
+	while (mq_receive(incoming, msg, 8192, 0) >= 0) {
+		fprintf(stderr, "R:%s\n", msg);
+		// Write to socket
+		if (write(accepted_socket, msg, 8192) == -1) {
+			fprintf(stderr, "No write%s\n", msg);
+		}
+	}
 }
 
 int main(int argc, char **argv) {
-	printf("Server starting. \n");
+	// Initialize mq_ll
+	mq_ll = ll_init();
+
+	// Open incoming mqd for parent
+	mqd_parent_incoming = mq_open(PARENT_MESSAGE_QUEUE,
+	O_CREAT | O_RDONLY | O_NONBLOCK,
+	S_IRWXG | S_IRWXU | S_IRWXO, NULL);
+
+	fprintf(stderr, "Server starting. \n");
 
 	// Create a socket
 	int sockfd = socket(PF_INET, SOCK_STREAM, 0);
@@ -137,65 +150,83 @@ int main(int argc, char **argv) {
 	addr.sin_addr.s_addr = *(in_addr_t *) binaryLocalhost;
 	addr.sin_port = htons(PORT_NUM);
 
-	int accepted_socket;
 	// Bind the socket
 	if (bind(sockfd, (struct sockaddr *) &addr, sizeof(struct sockaddr_in))
 			== 0) {
-		printf("Main>Successfully bound address. \n");
+		fprintf(stderr, "Main>Successfully bound address. \n");
 
 		if (listen(sockfd, 10) == 0) {
-			printf("Main>Listening for connections.\n");
-			printf("Main>Accepting connections! Will block. \n");
+			fprintf(stderr, "Main>Listening for connections.\n");
+			fprintf(stderr, "Main>Accepting connections! Will block. \n");
 			while (1) {
 
-				int bufsize = 100;
+				int bufsize = 8192;
 				char *buf = malloc(bufsize + 1);
 				char chr;
 
 				accepted_socket = accept(sockfd, NULL, 0);
 
-				printf("Main>Accepted socket, forking \n");
+				fprintf(stderr, "Main>Accepted socket, forking \n");
 
 				pid_t child_pid = fork();
+
 				switch (child_pid) {
 				case 0: {
 					// Child process
 					pid_t process_pid = getpid();
-					while (1) {
-						// Open queue to parent
-						mqd_t outgoing = mq_open("/charlando_main_server_input",
-						O_CREAT | O_WRONLY);
 
-						// Read if possible
+					// Open outgoing queue to parent
+					mqd_t outgoing = mq_open(PARENT_MESSAGE_QUEUE,
+					O_CREAT | O_WRONLY, S_IRWXG | S_IRWXU | S_IRWXO, NULL);
+
+					// Open incoming queue from parent
+					char *queue_name = malloc(100);
+					sprintf(queue_name, "/charlando_server_child_%d",
+							process_pid);
+					// TODO: Clean global variable?
+					incoming = mq_open(queue_name,
+					O_CREAT | O_RDONLY | O_NONBLOCK,
+					S_IRWXG | S_IRWXU | S_IRWXO, NULL);
+					free(queue_name);
+
+					// Register handler for SIGUSR1 to receive messages
+					struct sigaction sa;
+					memset(&sa, 0, sizeof sa);
+					sa.sa_handler = &process_mq_child;
+					sa.sa_flags = SA_RESTART;
+					sigaction(SIGUSR1, &sa, NULL);
+
+					// Fire once to bind
+					process_mq_child();
+
+					while (1) {
+						// Read if possible from socket
 						int i;
-						int bytes;
+						int bytes = 0;
 						for (i = 0;
-								(bytes = recv(accepted_socket, &chr, 1, 0)) > 0;
+								(bytes += recv(accepted_socket, &chr, 1, 0)) > 0;
 								i++) {
 							buf[i] = chr;
 							if (chr == '\0')
 								break;
 						}
 
-						// Check if it above read failed with error
+						// If we read a message
 						if (bytes > 0) {
-							// TODO: Send to parent via message queue
-//							printf("Client[%d]>%s\n", process_pid, buf);
-							mq_send(outgoing, buf, strlen(buf) + 1, 0);
-
-							strrev(buf, strlen(buf) + 1);
-							printf("Server[%d]>%s\n", process_pid, buf);
-							if (write(accepted_socket, buf, strlen(buf) + 1)
-									== -1) {
-								break;
-							}
+							// Send to parent via message queue
+							char *msg = malloc(8192);
+							memset(msg, 0, 8192);
+							sprintf(msg, "Client[%d]>%s\n", process_pid, buf);
+							mq_send(outgoing, msg, strlen(msg), 0);
+							free(msg);
 						} else {
 							break;
 						}
 
 					}
 					free(buf);
-					printf("Server[%d]>Client disconnected, exiting.\n",
+					fprintf(stderr,
+							"Server[%d]>Client disconnected, exiting.\n",
 							process_pid);
 					exit(EXIT_SUCCESS);
 					break;
@@ -209,20 +240,27 @@ int main(int argc, char **argv) {
 					sa.sa_flags = SA_RESTART;
 					sigaction(SIGCHLD, &sa, NULL);
 
-					// Open message queue for incoming messages
-					mqd_t incoming = mq_open("/charlando_main_server_input",
-					O_CREAT | O_RDONLY);
-
 					// Register handler for SIGUSR1 to grab new messages
-					struct sigaction sau;
-					memset(&sa, 0, sizeof sau);
-					sau.sa_handler = &sigusr1_handler;
-					sau.sa_flags = SA_RESTART;
-					sigaction(SIGUSR1, &sau, NULL);
+					memset(&sa, 0, sizeof sa);
+					sa.sa_handler = &process_mq_parent;
+					sa.sa_flags = SA_RESTART;
+					sigaction(SIGUSR1, &sa, NULL);
 
-					register_mq_notify(incoming);
+					// Open child message queue, and add to linked list
+					char *queue_name = malloc(100);
+					memset(queue_name, 0, 100);
+					sprintf(queue_name, "/charlando_server_child_%d",
+							child_pid);
+					fprintf(stderr, "%s\n", queue_name);
+					mqd_t child_mqd = mq_open(queue_name, O_CREAT | O_WRONLY,
+					S_IRWXG | S_IRWXU | S_IRWXO, NULL);
+					ll_add(mq_ll, node_init(&child_mqd, sizeof(child_mqd)));
+					free(queue_name);
 
-					printf("Main>Child created Server[%d]", child_pid);
+					process_mq_parent();
+
+					fprintf(stderr, "Main>Child created Server[%d]\n",
+							child_pid);
 					break;
 				}
 				}
@@ -230,16 +268,15 @@ int main(int argc, char **argv) {
 			}
 
 		} else {
-			printf("Couldn't listen. \n");
+			fprintf(stderr, "Couldn't listen. \n");
 		}
 
 	} else {
-		printf("Couldn't bind address. \n");
+		fprintf(stderr, "Couldn't bind address. \n");
 	}
 
 	close(sockfd);
 
-	printf("Server shutting down. \n");
+	fprintf(stderr, "Server shutting down. \n");
 	return 0;
 }
-

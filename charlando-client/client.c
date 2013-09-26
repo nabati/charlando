@@ -17,9 +17,9 @@
 
 void trim_newlines(char *string, size_t length) {
 	int i;
-	for (i=0; i<length; i++) {
-		if (string[i]=='\n')
-			string[i]=' ';
+	for (i = 0; i < length; i++) {
+		if (string[i] == '\n')
+			string[i] = ' ';
 	}
 }
 
@@ -51,24 +51,29 @@ int main(int argc, char **argv) {
 		printf("Connected! \n");
 
 		char chr = NULL;
-		char *buf = malloc(100 + 1);
-		size_t bufsize = 100;
+		size_t msg_size = 8192;
+		char *msg = malloc(msg_size);
+		memset(msg, 0, msg_size);
 		size_t input_size = 0;
 
 		while (1) {
 			printf("Client>");
-			input_size = getline(&buf, &bufsize, stdin);
-			trim_newlines(buf, input_size);
-			write(sockfd, buf, (input_size + 1));
-
-			int i;
-			int result;
-			for (i = 0; (result = recv(sockfd, &chr, 1, 0)); i++) {
-				buf[i]=chr;
-				if (chr == '\0')
-					break;
+			input_size = getline(&msg, &msg_size, stdin);
+			if (input_size > 1) {
+				trim_newlines(msg, input_size);
+				write(sockfd, msg, (input_size + 1));
+			} else if (input_size == 1) {
+				// TODO: Fix hack for reading stuff from socket, newline reads from socket
+				memset(msg, 0, msg_size);
+				int i;
+				int result;
+				for (i = 0; (result = recv(sockfd, &chr, 1, 0)); i++) {
+					msg[i]=chr;
+					if (chr == '\0')
+						break;
+				}
+				printf("Server>%s\n", msg);
 			}
-			printf("Server>%s\n", buf);
 		}
 
 	} else {

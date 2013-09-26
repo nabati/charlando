@@ -13,9 +13,10 @@
 #include <stdlib.h>
 
 // Node-container
-typedef struct {
-	struct _node *next;
-	char *data;
+typedef struct Node Node;
+typedef struct Node {
+	Node *next;
+	void *data;
 	size_t length;
 } Node;
 
@@ -38,7 +39,7 @@ LinkedList *ll_init() {
  * @param linked_list
  * @return
  */
-int ll_next(LinkedList *ll) {
+Node *ll_next(LinkedList *ll) {
 	if (ll->cur == NULL) {
 		ll->cur = ll->head;
 	} else {
@@ -62,10 +63,11 @@ void ll_add(LinkedList *ll, Node *newNode) {
 	}
 }
 
-// Initializes a new node
-Node *node_init(char *data, size_t length) {
+// Initializes a new node and copies data to it
+Node *node_init(void *data, size_t length) {
 	Node *newNode = malloc(sizeof(Node));
-	newNode->data = data;
+	newNode->data = malloc(length);
+	memcpy(newNode->data, data, length);
 	newNode->length = length;
 	newNode->next = NULL;
 	return newNode;
